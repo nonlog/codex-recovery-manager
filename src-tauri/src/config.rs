@@ -235,4 +235,38 @@ mod tests {
     fn localhost_scheme_is_stable() {
         assert_eq!(localhost_url(17682), "http://127.0.0.1:17682/v1");
     }
+    #[test]
+    fn provider_rewrite_keeps_unrelated_settings_and_restores_direct_url() {
+        let original=std::env::var_os("CODEX_HOME");
+        let temp=std::env::temp_dir().join(format!("codex-recovery-test-{}",std::process::id()));
+        let _=std::fs::create_dir_all(&temp);
+        let file=temp.join("config.toml");
+        let fixture=r#"
+model_provider = "example"
+[model_providers.example]
+name = "Example"
+wire_api = "responses"
+base_url = "https://gateway.example/custom/api/v1" # keep this comment
+request_max_retries = 3
+[model_providers.other]
+name = "Other"
+wire_api = "responses"
+base_url = "https://other.example/v1"
+"#;
+        std::fs::write(&file,fixture).unwrap();
+        std::env::set_var("CODEX_HOME",&temp);
+        let provider=providers().unwrap();
+        assert_eq!(provider.len(),2);
+        assert!(provider.iter().any(|v|v.name=="example"&&v.active));
+        let local=localhost_url(17682);
+        switch_provider("example","https://gateway.example/custom/api/v1",&local).unwrap();
+        assert_eq!(read_provider_url("example").unwrap(),local);
+        let content=std::fs::read_to_string(&file).unwrap();
+        assert!(content.contains("request_max_retries = 3"));
+        assert!(content.contains("https://other.example/v1"));
+        switch_provider("example",&local,"https://gateway.example/custom/api/v1").unwrap();
+        assert_eq!(read_provider_url("example").unwrap(),"https://gateway.example/custom/api/v1");
+        if let Some(old)=original {std::env::set_var("CODEX_HOME",old);}else{std::env::remove_var("CODEX_HOME");}
+        let _=std::fs::remove_dir_all(temp);
+    }
 }

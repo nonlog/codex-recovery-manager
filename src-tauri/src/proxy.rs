@@ -321,4 +321,99 @@ data: {"type":"response.output_text.delta","delta":"Selected model is at capacit
         let u=mapped_url("https://gateway.example/custom/api/v1",&"/v1/responses?test=1".parse::<Uri>().unwrap()).unwrap();
         assert_eq!(u.as_str(),"https://gateway.example/custom/api/v1/responses?test=1");
     }
+
+    #[tokio::test]
+    async fn proxy_retries_capacity_without_resending_a_user_turn() {
+        use axum::{routing::post, response::IntoResponse};
+        use std::sync::atomic::AtomicUsize;
+        let calls=Arc::new(AtomicUsize::new(0));
+        let counter=calls.clone();
+        let upstream=Router::new()
+            .route("/compatible/api/responses",post(move |headers:HeaderMap| {
+                let tracker=counter.clone();
+                async move {
+                    assert_eq!(headers.get("authorization").and_then(|x|x.to_str().ok()),Some("Bearer mock"));
+                    let count=tracker.fetch_add(1,Ordering::Relaxed);
+                    if count==0 {
+                        (StatusCode::SERVICE_UNAVAILABLE,Json(serde_json::json!({
+                            "error":{"code":"server_overloaded","message":"Selected model is at capacity"}
+                        }))).into_response()
+                    } else {
+                        (StatusCode::OK,Json(serde_json::json!({"id":"completed"}))).into_response()
+                    }
+                }
+            }));
+        let upstream_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_port=upstream_listener.local_addr().unwrap().port();
+        let upstream_job=tokio::spawn(async move {
+            axum::serve(upstream_listener,upstream).await.unwrap();
+        });
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let settings=Settings {
+            provider:Some("mock".into()),
+            upstream_base_url:Some(format!("http://127.0.0.1:{upstream_port}/compatible/api")),
+            local_port:port,retry_enabled:true,enabled:true,max_retries:2,
+            base_delay_ms:200,max_delay_ms:1000,
+        };
+        let metric=Arc::new(Metrics::default());
+        let ctx=ProxyContext::new(Arc::new(RwLock::new(settings)),metric.clone()).unwrap();
+        let (shutdown,receiver)=oneshot::channel();
+        let job=tokio::spawn(run_server(listener,ctx,receiver));
+        let reply=reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/v1/responses"))
+            .header("Authorization","Bearer mock").body(r#"{"input":"test"}"#)
+            .send().await.unwrap();
+        assert_eq!(reply.status(),StatusCode::OK);
+        assert_eq!(reply.json::<serde_json::Value>().await.unwrap()["id"],"completed");
+        assert_eq!(calls.load(Ordering::Relaxed),2);
+        assert_eq!(metric.retries.load(Ordering::Relaxed),1);
+        assert_eq!(metric.recovered.load(Ordering::Relaxed),1);
+        let _=shutdown.send(());
+        job.await.unwrap().unwrap();
+        upstream_job.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_does_not_replay_after_model_output() {
+        use axum::{routing::post, response::IntoResponse};
+        use std::sync::atomic::AtomicUsize;
+        let calls=Arc::new(AtomicUsize::new(0));
+        let counter=calls.clone();
+        let upstream=Router::new().route("/v1/responses",post(move || {
+            let counter=counter.clone();
+            async move {
+                counter.fetch_add(1,Ordering::Relaxed);
+                (StatusCode::OK,[("content-type","text/event-stream")],
+                    "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n\
+                     event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"server_overloaded\"}}\n\n"
+                ).into_response()
+            }
+        }));
+        let upstream_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_port=upstream_listener.local_addr().unwrap().port();
+        let upstream_job=tokio::spawn(async move {axum::serve(upstream_listener,upstream).await.unwrap();});
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let settings=Settings {
+            provider:Some("mock".into()),
+            upstream_base_url:Some(format!("http://127.0.0.1:{upstream_port}/v1")),
+            local_port:port,retry_enabled:true,enabled:true,max_retries:3,
+            base_delay_ms:200,max_delay_ms:1000,
+        };
+        let metric=Arc::new(Metrics::default());
+        let ctx=ProxyContext::new(Arc::new(RwLock::new(settings)),metric.clone()).unwrap();
+        let (shutdown,receiver)=oneshot::channel();
+        let job=tokio::spawn(run_server(listener,ctx,receiver));
+        let reply=reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/v1/responses"))
+            .body("{}").send().await.unwrap();
+        let text=reply.text().await.unwrap();
+        assert!(text.contains("partial"));
+        assert_eq!(calls.load(Ordering::Relaxed),1);
+        assert_eq!(metric.retries.load(Ordering::Relaxed),0);
+        let _=shutdown.send(());
+        job.await.unwrap().unwrap();
+        upstream_job.abort();
+    }
 }

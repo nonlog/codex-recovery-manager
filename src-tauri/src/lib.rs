@@ -266,7 +266,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app,_,_|show_main(app)))
         .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,Some(vec!["--background".to_string()])
+            MacosLauncher::LaunchAgent,Some(vec!["--background"])
         ))
         .setup(|app| {
             let dir=app.path().app_config_dir()?;
