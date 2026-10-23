@@ -1,0 +1,34 @@
+[package]
+name = "codex-recovery-manager"
+version = "0.1.0"
+description = "Native Windows model recovery manager for Codex"
+authors = ["Codex <codex@openai.com>"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "codex_recovery_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+axum = { version = "0.8", features = ["http1", "json", "tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = "0.22"
+url = "2"
+bytes = "1"
+futures-util = "0.3"
+rand = "0.8"
+dirs = "6"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
