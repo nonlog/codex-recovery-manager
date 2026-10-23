@@ -107,6 +107,9 @@ async fn enable_core(rt:&Arc<AppRuntime>) -> Result<(),String> {
     let mut cfg=rt.settings()?;
     if cfg.enabled && rt.running().await {return Ok(());}
     let provider=cfg.provider.clone().ok_or("No Responses-compatible provider selected")?;
+    if !config::providers()?.iter().any(|p| p.active && p.name==provider && p.wire_api=="responses") {
+        return Err("The selected provider is not active in Codex. Select the active Responses provider or update model_provider in Codex first.".into());
+    }
     let upstream=cfg.upstream_base_url.clone().ok_or("No upstream provider URL selected")?;
     config::validate_upstream(&upstream,cfg.local_port)?;
     let current=config::read_provider_url(&provider)?;
@@ -166,7 +169,9 @@ async fn pause_core(rt:&Arc<AppRuntime>,enabled:bool) -> Result<(),String> {
 }
 
 #[tauri::command]
-async fn enable_recovery(state:State<'_,Arc<AppRuntime>>) -> Result<(),String> {
+async fn enable_recovery(state:State<'_,Arc<AppRuntime>>, app:AppHandle) -> Result<(),String> {
+    // A persistent localhost Provider must never be enabled without next-login recovery.
+    app.autolaunch().enable().map_err(|e|format!("Windows autostart could not be enabled; Codex was not redirected: {e}"))?;
     enable_core(state.inner()).await
 }
 #[tauri::command]
@@ -215,7 +220,10 @@ async fn get_status(
     })
 }
 #[tauri::command]
-fn set_autostart(app:AppHandle,enabled:bool) -> Result<(),String> {
+fn set_autostart(app:AppHandle,state:State<'_,Arc<AppRuntime>>,enabled:bool) -> Result<(),String> {
+    if !enabled && state.settings()?.enabled {
+        return Err("Disable recovery and restore the upstream before disabling Windows autostart. Otherwise a reboot could leave Codex on a dead localhost endpoint.".into());
+    }
     let launcher=app.autolaunch();
     if enabled {launcher.enable().map_err(|e|e.to_string())}
     else {launcher.disable().map_err(|e|e.to_string())}

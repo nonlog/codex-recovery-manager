@@ -44,6 +44,18 @@ jobs:
             The application does not include any user's provider URLs or credentials.
           releaseDraft: true
           prerelease: true
+      - name: Verify native GUI executable and installer
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/codex-recovery-manager.exe"
+          if (!(Test-Path $exe)) { throw "Portable Windows executable missing" }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5c)
+          if ($subsystem -ne 2) { throw "Binary has a console subsystem (expected native GUI subsystem=2)" }
+          $nsis = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/" -Filter "*.exe")
+          if ($nsis.Count -lt 1) { throw "NSIS installer missing" }
+          Write-Host "Verified native GUI subsystem and $($nsis.Count) installer(s)"
       - name: Upload portable executable and NSIS installer
         uses: actions/upload-artifact@v4
         with:

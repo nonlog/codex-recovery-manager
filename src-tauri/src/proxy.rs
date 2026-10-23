@@ -240,6 +240,16 @@ struct ActiveGuard(Arc<Metrics>);
 impl Drop for ActiveGuard {
     fn drop(&mut self) { self.0.active.fetch_sub(1,Ordering::Relaxed); }
 }
+fn track_response(response:Response<Body>,guard:ActiveGuard) -> Response<Body> {
+    // Keep the request active until the SSE/body stream is consumed or dropped,
+    // not merely until Axum has produced the HTTP response headers.
+    let (parts,body)=response.into_parts();
+    let stream=Box::pin(body.into_data_stream());
+    let tracked=stream::unfold((stream,guard),|(mut stream,guard)| async move {
+        stream.next().await.map(|item|(item,(stream,guard)))
+    });
+    Response::from_parts(parts,Body::from_stream(tracked))
+}
 async fn proxy_request(State(ctx):State<Arc<ProxyContext>>,request:Request<Body>) -> Response<Body> {
     let (parts,body)=request.into_parts();
     if parts.uri.path()!="/v1" && !parts.uri.path().starts_with("/v1/") {
@@ -247,7 +257,7 @@ async fn proxy_request(State(ctx):State<Arc<ProxyContext>>,request:Request<Body>
     }
     ctx.metrics.requests.fetch_add(1,Ordering::Relaxed);
     ctx.metrics.active.fetch_add(1,Ordering::Relaxed);
-    let _active=ActiveGuard(ctx.metrics.clone());
+    let active_guard=ActiveGuard(ctx.metrics.clone());
     let cfg=match ctx.settings.read() {
         Ok(guard)=>guard.clone(),
         Err(_)=>return error_response(StatusCode::INTERNAL_SERVER_ERROR,"Recovery state unavailable")
@@ -267,7 +277,7 @@ async fn proxy_request(State(ctx):State<Arc<ProxyContext>>,request:Request<Body>
         match once(&ctx,&parts.method,&parts.headers,&body,&url,inspect).await {
             Ok(Attempt::Done(response))=>{
                 if attempt>0 {ctx.metrics.recovered.fetch_add(1,Ordering::Relaxed);}
-                return response;
+                return track_response(response,active_guard);
             }
             Ok(Attempt::Retry(reason))=>{
                 match &reason {
@@ -287,7 +297,7 @@ async fn proxy_request(State(ctx):State<Arc<ProxyContext>>,request:Request<Body>
         }
     }
     ctx.metrics.exhausted.fetch_add(1,Ordering::Relaxed);
-    match last_retry {
+    let response=match last_retry {
         Some(RetryReason::Capacity{status,headers,body})=>{
             // Preserve the final upstream failure, but suppress the misleading 200 SSE success status.
             if status.is_success(){
@@ -297,7 +307,8 @@ async fn proxy_request(State(ctx):State<Arc<ProxyContext>>,request:Request<Body>
             }
         }
         _=>error_response(StatusCode::BAD_GATEWAY,"Upstream stream ended before model output")
-    }
+    };
+    track_response(response,active_guard)
 }
 
 #[cfg(test)]

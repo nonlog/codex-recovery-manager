@@ -56,6 +56,7 @@ function App() {
     provider: "", upstreamBaseUrl: "", localPort: 17682, maxRetries: 4, baseDelayMs: 1600, maxDelayMs: 30000
   });
   const [initialised, setInitialised] = useState(false);
+  const [dismissedStatusError, setDismissedStatusError] = useState<string | null>(null);
   const [tab, setTab] = useState<"overview" | "settings">("overview");
   const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
 
@@ -108,6 +109,7 @@ function App() {
 
   const mode = snapshot?.mode ?? "direct";
   const state = modeLabels[mode];
+  const displayedError = error ?? (snapshot?.lastError && snapshot.lastError !== dismissedStatusError ? snapshot.lastError : null);
   const editable = mode === "direct" && !busy;
   const currentProvider = snapshot?.providers.find(p => p.name === draft.provider);
   const isDirty = useMemo(() => {
@@ -141,7 +143,7 @@ function App() {
           </div>
         </header>
 
-        {error && <div role="alert" className="error-banner"><CircleAlert size={17}/><div><strong>Operation did not complete</strong><p>{error}</p></div><button onClick={() => setError(null)}>Dismiss</button></div>}
+        {displayedError && <div role="alert" className="error-banner"><CircleAlert size={17}/><div><strong>Recovery needs attention</strong><p>{displayedError}</p></div><button onClick={() => {setError(null);setDismissedStatusError(displayedError);}}>Dismiss</button></div>}
 
         {tab === "overview" ? (
           <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:.22}} className="main-panel">

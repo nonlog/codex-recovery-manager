@@ -41,6 +41,12 @@ Providers must have an explicit custom Base URL and wire_api = "responses". The 
 - **X** hides the UI to tray, leaving the proxy alive.
 - **Quit** via tray attempts a safe disable before exit; quitting is blocked while model requests are active.
 
+## Migrating from the old Node.js / PowerShell recovery manager
+
+If Codex currently points to a localhost port owned by a previous script-based recovery tool, disable the **old** recovery manager and restore the original gateway Base URL before enabling this native app. Fully exit its process and remove its legacy startup task. The native app will reject a port conflict rather than redirect Codex to an unverified listener.
+
+Do not copy anyone's local recovery settings or authentication files into the shared distribution.
+
 ## Security and caveats
 
 No provider URL or credential belonging to the developer is shipped. Personal config stays in the user's application config directory. Authentication headers pass through without being stored; model prompts and response bodies are not logged. Remote upstreams must use HTTPS, and URL loops are rejected. The app only modifies the selected provider's base_url in ~/.codex/config.toml; unknown external edits are not overwritten.
