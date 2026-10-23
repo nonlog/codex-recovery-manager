@@ -15,6 +15,19 @@ Native Windows desktop application built with Tauri 2 / Rust + React; not a Powe
 - Start with Windows, single-instance operation, no Node.js, PowerShell or separate service necessary.
 - Windows NSIS installer and portable EXE built by GitHub Actions.
 
+## Scoop installation (recommended)
+
+Install through your existing Scoop setup:
+
+```powershell
+scoop bucket add www https://github.com/nonlog/scoop-www
+scoop install www/codex-recovery-manager
+```
+
+If the `www` bucket is already present, skip `scoop bucket add`. Scoop installs the portable Windows GUI executable into your configured Scoop root, creates a Start Menu shortcut, and supports future upgrades through `scoop update codex-recovery-manager`. No console service is involved.
+
+When migrating from a previous NSIS installation, first **Disable & restore direct** in the existing app, quit it, uninstall the NSIS copy, then start the Scoop copy and enable recovery again. Keep the app running in the system tray while recovery is enabled. Before uninstalling the Scoop copy, disable recovery so Codex is not left pointing to a stopped localhost proxy.
+
 ## Installation
 
 Download the latest validated Windows installer from [Actions](https://github.com/nonlog/codex-recovery-manager/actions/workflows/windows.yml) or [Releases](https://github.com/nonlog/codex-recovery-manager/releases).
